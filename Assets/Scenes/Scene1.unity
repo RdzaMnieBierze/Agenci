@@ -7858,15 +7858,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SimulationController
   fireManager: {fileID: 1228696511}
-<<<<<<< HEAD
   agentSpawner: {fileID: 690805990}
   startFireButton: {fileID: 1620523269}
   restartButton: {fileID: 416932319}
-=======
-  agentSpawner: {fileID: 0}
-  startFireButton: {fileID: 1620523269}
-  restartButton: {fileID: 0}
->>>>>>> 5ed4ec70d503f34b4838e353332066cc91cbb417
   statusText: {fileID: 0}
 --- !u!4 &436296693
 Transform:
@@ -28511,7 +28505,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-<<<<<<< HEAD
+
   m_AnchoredPosition: {x: -600, y: -100}
 =======
   m_AnchoredPosition: {x: -811, y: 168}
