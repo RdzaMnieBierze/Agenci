@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using System.Collections.Generic;
 
 public class AgentSpawner : MonoBehaviour
 {
@@ -20,6 +21,8 @@ public class AgentSpawner : MonoBehaviour
     
     private int spawnedAgents = 0;
 
+    // lista checkpointów 
+    public List<Transform> globalPath;
     private void Start()
     {
         if (spawnButton != null)
@@ -56,6 +59,7 @@ public class AgentSpawner : MonoBehaviour
             {
                 GameObject newAgent = Instantiate(agentPrefab, randomPos, Quaternion.identity, spawnArea);
                 newAgent.name = "Agent_" + (i + 1);
+                newAgent.GetComponent<EnemyMovement>().orderedPath = new List<Transform>(globalPath);
                 spawnedAgents++;
             }
             else

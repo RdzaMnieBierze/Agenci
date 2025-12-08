@@ -108,3 +108,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::EnemyMovement
   Target: {fileID: 0}
   UpdateSpeed: 0.1
+  exitTag: Exit
+  orderedPath:
+  - {fileID: 0}
+  checkpointTag: Checkpoint
