@@ -35,7 +35,6 @@ public class EnemyMovement : MonoBehaviour
 
         StartCoroutine(FollowTarget());
     }
-
     private IEnumerator FollowTarget()
     {
         WaitForSeconds wait = new WaitForSeconds(UpdateSpeed);
