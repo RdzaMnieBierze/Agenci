@@ -1,25 +1,49 @@
 using UnityEngine;
 using UnityEngine.AI;
 using System.Collections;
-using System.Collections.Generic;
 
 [RequireComponent(typeof(NavMeshAgent))]
 public class AgentController : MonoBehaviour, IAlarmObserver
 {
+    #region Ustawienia Agenta
     [Header("Agent Settings")]
     [SerializeField] private AgentType agentType;
     [SerializeField] private AgentTraits traits;
-
     private NavMeshAgent navAgent;
-    private AgentState currentState = AgentState.Working;
-
-    // State Machine Enum
+    private AgentState currentState = AgentState.Wandering;
     public enum AgentState
     {
-        Working,
+        Wandering,
         Evacuating
     }
 
+    private EvacuationBeacon currentTargetBeacon = null;
+    private float wanderTimer = 0f;
+    private float wanderInterval = 5f; // Zwiększone z 3 na 5 sekund
+    private Bounds? wanderBounds = null;
+    private float timeSinceLastBeaconSeen = 0f; // Czas od ostatniego zobaczenia beacona
+    #endregion
+    #region Panic System
+    [Header("Panic System")]
+    [SerializeField] private float panicLevel = 0f; // 0-1, gdzie 1 = pełna panika
+    [SerializeField] private float panicIncreaseRate = 0.05f; // Jak szybko rośnie panika
+    [SerializeField] private float panicDecreaseRate = 0.1f; // Jak szybko spada panika
+    [SerializeField] private float panicThreshold = 0.7f; // Próg paniki (>0.7 = panikuje)
+    #endregion
+    #region Smoke Disorientation
+    [Header("Smoke Disorientation")]
+    [SerializeField] private bool isInSmoke = false;
+    [SerializeField] private float smokeDisorientationChance = 0.3f; // 30% szans na dezorientację
+    [SerializeField] private float smokeVisionReduction = 0.5f; // Zmniejszenie zasięgu wzroku o 50%
+    #endregion
+    #region  Publiczne properties
+    public AgentType Type => agentType;
+    public AgentTraits Traits => traits;
+    public AgentState CurrentState => currentState;
+    public float TimeSinceLastBeaconSeen => timeSinceLastBeaconSeen;
+    #endregion
+
+    #region Unity Methods (Start, OnDestroy, Initialize)
     private void Awake()
     {
         navAgent = GetComponent<NavMeshAgent>();
@@ -27,13 +51,11 @@ public class AgentController : MonoBehaviour, IAlarmObserver
 
     private void Start()
     {
-        // Register to Alarm System
         if (AlarmSystem.Instance != null)
         {
             AlarmSystem.Instance.RegisterObserver(this);
         }
 
-        // Start wandering immediately (randomize first wander time)
         wanderTimer = Random.Range(0f, wanderInterval);
         WanderAround();
     }
@@ -57,7 +79,7 @@ public class AgentController : MonoBehaviour, IAlarmObserver
             navAgent.acceleration = 8f;
             navAgent.angularSpeed = 120f;
             
-            if (agentType == AgentType.Elderly || agentType == AgentType.Disabled || agentType == AgentType.Blind)
+            if (agentType == AgentType.Elderly || agentType == AgentType.Disabled)
             {
                 navAgent.avoidancePriority = 40;
             }
@@ -70,12 +92,13 @@ public class AgentController : MonoBehaviour, IAlarmObserver
             navAgent.autoBraking = false;
         }
     }
+    #endregion
 
+    // Reakcja na alarm
     public void OnAlarmTriggered(Vector3 alarmPosition)
     {
         if (currentState == AgentState.Evacuating) return;
 
-        // Reaction delay based on traits
         StartCoroutine(ReactToAlarm(traits.ReactionTime));
     }
 
@@ -83,361 +106,332 @@ public class AgentController : MonoBehaviour, IAlarmObserver
     {
         yield return new WaitForSeconds(delay);
         
-        Debug.Log($"{name} heard the alarm! Evacuating!");
+        Debug.Log($"{name} heard alarm! Starting evacuation!");
         currentState = AgentState.Evacuating;
     }
 
-    private EvacuationBeacon currentTargetBeacon = null;
-    private AgentController guidingAgent = null;
-    private bool isBeingGuided = false;
-    
-    private float wanderTimer = 0f;
-    private float wanderInterval = 3f; // Change direction every 3 seconds
-
+    // Odpalanie Update zaleznie od stanu
     private void Update()
     {
-        if (currentState == AgentState.Working)
+        if (currentState == AgentState.Wandering)
         {
-            wanderTimer += Time.deltaTime;
-            
-            bool needsNewDestination = !navAgent.hasPath || 
-                                       navAgent.remainingDistance < 1.5f ||
-                                       wanderTimer >= wanderInterval;
-            
-            if (needsNewDestination)
-            {
-                wanderTimer = 0f;
-                WanderAround();
-            }
+            UpdateWandering();
         }
         else if (currentState == AgentState.Evacuating)
         {
-            if (isBeingGuided && guidingAgent != null)
-            {
-                float distanceToGuide = Vector3.Distance(transform.position, guidingAgent.transform.position);
-                
-                if (distanceToGuide > 2f)
-                {
-                    navAgent.SetDestination(guidingAgent.transform.position);
-                }
-                else if (distanceToGuide < 0.5f)
-                {
-                    navAgent.isStopped = true;
-                }
-                else
-                {
-                    navAgent.isStopped = false;
-                }
-                
-                if (IsNearFinish(guidingAgent.transform.position, 3f))
-                {
-                    Debug.Log($"{name} (blind) reached Finish with guide!");
-                    gameObject.SetActive(false);
-                }
-                return;
-            }
+            UpdateEvacuating();
+            if (isInSmoke)
+                ApplySmokeDisorientation();
+        }
+    }
+
+    private void UpdateWandering()
+    {
+        wanderTimer += Time.deltaTime;
+        
+        bool needsNewDestination = !navAgent.hasPath || 
+                                   navAgent.remainingDistance < 1.5f ||
+                                   wanderTimer >= wanderInterval;
+        
+        if (needsNewDestination)
+        {
+            wanderTimer = 0f;
+            WanderAround();
+        }
+    }
+
+    private void UpdateEvacuating()
+    {
+        timeSinceLastBeaconSeen += Time.deltaTime;
+        
+        UpdatePanicLevel();
+        
+
+        if (IsNearExit(transform.position, 3f))
+        {
+            Debug.Log($"{name} reached Exit - evacuation complete!");
+            gameObject.SetActive(false);
+            return;
+        }
+
+        if (currentTargetBeacon != null && navAgent.hasPath)
+        {
+            float heightDiff = Mathf.Abs(currentTargetBeacon.Position.y - transform.position.y);
+            float horizontalDist = Vector3.Distance(
+                new Vector3(transform.position.x, 0, transform.position.z),
+                new Vector3(currentTargetBeacon.Position.x, 0, currentTargetBeacon.Position.z)
+            );
             
-            float distToBeacon = currentTargetBeacon != null ? Vector3.Distance(transform.position, currentTargetBeacon.Position) : Mathf.Infinity;
-            bool isStuckNearBeacon = distToBeacon < 8.0f && navAgent.velocity.sqrMagnitude < 0.2f;
-            
-            if (currentTargetBeacon != null && (distToBeacon < 4.0f || isStuckNearBeacon))
+            if (heightDiff < 0.75f && horizontalDist < 3f)
             {
+                timeSinceLastBeaconSeen = 0f;
+                
                 if (currentTargetBeacon.NextBeacon != null)
                 {
-                    Debug.Log($"{name} reached {currentTargetBeacon.name}, moving to next beacon: {currentTargetBeacon.NextBeacon.name}");
+                    Debug.Log($"{name} reached beacon, moving to next: {currentTargetBeacon.NextBeacon.name}");
                     currentTargetBeacon = currentTargetBeacon.NextBeacon;
                     navAgent.SetDestination(currentTargetBeacon.Position);
                 }
                 else
                 {
-                    Debug.Log($"{name} reached last beacon, searching for Finish...");
+                    Debug.Log($"{name} reached last beacon, heading to exit");
                     currentTargetBeacon = null;
-                    Transform finish = FindNearestFinish();
-                    if (finish != null)
+                    Transform exit = FindNearestExit();
+                    if (exit != null)
                     {
-                        Debug.Log($"{name} heading to Finish: {finish.name}");
-                        navAgent.SetDestination(finish.position);
+                        navAgent.SetDestination(exit.position);
                     }
                 }
+                return;
             }
-            else if (navAgent.hasPath && navAgent.remainingDistance < 2f && IsNearFinish(transform.position, 3f))
-            {
-                Debug.Log($"{name} reached Finish - evacuation complete!");
-                gameObject.SetActive(false);
-            }
-            else if (currentTargetBeacon != null)
-            {
-                if (!navAgent.hasPath || navAgent.remainingDistance < 0.5f)
-                {
-                    navAgent.SetDestination(currentTargetBeacon.Position);
-                }
-            }
-            else if (!navAgent.hasPath || navAgent.pathStatus != UnityEngine.AI.NavMeshPathStatus.PathComplete)
-            {
-                DecideEvacuationTarget();
-            }
+        }
+
+        
+        if (!navAgent.hasPath || navAgent.remainingDistance < 1f)
+        {
+            DecideEvacuationTarget();
         }
     }
-
-    private void DecideEvacuationTarget()
+    // TODO: Ulepsz UpdatePanicLevel aby lepiej symulować panikę
+    private void UpdatePanicLevel()
     {
-        if (agentType == AgentType.Blind && !isBeingGuided)
+        // Panika ROŚNIE:
+        if (timeSinceLastBeaconSeen > 5f)
+            panicLevel += panicIncreaseRate * Time.deltaTime;
+        
+        if (!HasNearbyAgents(5f))
+            panicLevel += panicIncreaseRate * 0.5f * Time.deltaTime;
+        
+        if (!navAgent.hasPath)
+            panicLevel += panicIncreaseRate * 2f * Time.deltaTime;
+     
+        // Panika SPADA:
+        if (currentTargetBeacon != null && timeSinceLastBeaconSeen < 5f)
+            panicLevel -= panicDecreaseRate * Time.deltaTime;
+        
+        if (navAgent.hasPath && Vector3.Distance(transform.position, navAgent.destination) < traits.VisionRange)
+            panicLevel -= panicDecreaseRate * 0.5f * Time.deltaTime;
+
+        panicLevel = Mathf.Clamp01(panicLevel);
+        
+        // === EFEKTY PANIKI ===
+        if (panicLevel > panicThreshold)
         {
-            AgentController guide = FindNearestSightedEvacuatingAgent();
-            if (guide != null)
+            // Przy wysokiej panice - zwiększ prędkość ale gorsze decyzje
+            navAgent.speed = traits.MoveSpeed * (1f + panicLevel * 0.25f);
+            
+            // Losowo zmieniaj kierunek
+            if (Random.value < 0.1f * panicLevel)
             {
-                Debug.Log($"{name} (blind) found guide: {guide.name}");
-                guidingAgent = guide;
-                isBeingGuided = true;
-                navAgent.SetDestination(guide.transform.position);
-                return;
+                WanderAroundPanic();
             }
-            else
+        }
+        else
+        {
+            navAgent.speed = traits.MoveSpeed;
+        }
+    }
+    
+    // Sprawdza czy w pobliżu są inni agenci
+    private bool HasNearbyAgents(float radius)
+    {
+        AgentController[] agents = FindObjectsByType<AgentController>(FindObjectsSortMode.None);
+        
+        foreach (var other in agents)
+        {
+            if (other == this) continue;
+            if (Vector3.Distance(transform.position, other.transform.position) < radius)
             {
-                Debug.LogWarning($"{name} (blind): No guide found! Panicking!");
-                WanderAround();
-                return;
+                return true;
             }
         }
         
-        Vector3 fireAvoidanceDir = GetFireAvoidanceDirection();
-        
-        EvacuationBeacon bestBeacon = FindNearestVisibleBeacon(fireAvoidanceDir);
-        if (bestBeacon != null)
+        return false;
+    }
+
+    // JESLI AGENT NIE MA BEACONA
+    private void DecideEvacuationTarget()
+    {
+        // PRIORYTET 1: Szukaj widocznego beacona
+        EvacuationBeacon visibleBeacon = FindNearestVisibleBeacon();
+        if (visibleBeacon != null)
         {
-            Debug.Log($"{name} sees a beacon at {bestBeacon.name} and fleeing from fire!");
-            currentTargetBeacon = bestBeacon;
-            navAgent.SetDestination(bestBeacon.Position);
+            Debug.Log($"{name} sees beacon: {visibleBeacon.name}");
+            currentTargetBeacon = visibleBeacon;
+            timeSinceLastBeaconSeen = 0f;
+            navAgent.SetDestination(visibleBeacon.Position);
             return;
         }
 
-        AgentController leader = FindNearestEvacuatingAgentWithBeacon();
+        // PRIORYTET 2: Jeśli nie widzi beacona - idź na korytarz
+        Vector3? corridorPoint = FindNearestCorridorPoint();
+        if (corridorPoint.HasValue)
+        {
+            Debug.Log($"{name} heading to corridor to find beacon");
+            navAgent.SetDestination(corridorPoint.Value);
+            return;
+        }
+
+        // PRIORYTET 3: Podążaj za agentem który zna drogę
+        AgentController leader = FindReliableAgentWithBeacon();
         if (leader != null)
         {
-            Debug.Log($"{name} is following {leader.name} who knows the way!");
+            Debug.Log($"{name} following {leader.name} who recently saw beacon");
             navAgent.SetDestination(leader.transform.position);
             return;
         }
 
-        Transform finish = FindNearestFinish();
-        if (finish != null)
+        // PRIORYTET 4: Szukaj Exit bezpośrednio
+        Transform exit = FindNearestExitNotAbove();
+        if (exit != null && Vector3.Distance(transform.position, exit.position) < traits.VisionRange)
         {
-            Debug.Log($"{name} is heading directly to Finish (no beacons visible)");
-            currentTargetBeacon = null;
-            navAgent.SetDestination(finish.position);
+            Debug.Log($"{name} heading directly to exit");
+            navAgent.SetDestination(exit.position);
             return;
         }
 
-        if (fireAvoidanceDir != Vector3.zero)
-        {
-            Vector3 fleePoint = transform.position + fireAvoidanceDir * 10f;
-            navAgent.SetDestination(fleePoint);
-            Debug.LogWarning($"{name}: Fleeing blindly from fire!");
-        }
-        else
-        {
-            Debug.LogWarning($"{name}: No exit found! Panic!");
-            WanderAround();
-        }
+        // PRIORYTET 5: Biegaj losowo i szukaj beacona
+        Debug.LogWarning($"{name} lost! Running randomly to find beacon");
+        WanderAroundPanic();
     }
 
-    private Vector3 GetFireAvoidanceDirection()
-    {
-        FireSource[] fires = FindObjectsByType<FireSource>(FindObjectsSortMode.None);
-        if (fires.Length == 0) return Vector3.zero;
-
-        Vector3 avoidanceDir = Vector3.zero;
-        int threatsCount = 0;
-
-        foreach (var fire in fires)
-        {
-            Vector3 dirFromFire = transform.position - fire.transform.position;
-            float distance = dirFromFire.magnitude;
-
-            if (distance < 20f)
-            {
-                float weight = 1f - (distance / 20f);
-                avoidanceDir += dirFromFire.normalized * weight;
-                threatsCount++;
-            }
-        }
-
-        if (threatsCount > 0)
-        {
-            avoidanceDir.y = 0;
-            return avoidanceDir.normalized;
-        }
-
-        return Vector3.zero;
-    }
-
-    private EvacuationBeacon FindNearestVisibleBeacon(Vector3 preferredDirection)
+    private EvacuationBeacon FindNearestVisibleBeacon()
     {
         EvacuationBeacon[] beacons = FindObjectsByType<EvacuationBeacon>(FindObjectsSortMode.None);
         EvacuationBeacon best = null;
-        float bestScore = -Mathf.Infinity;
+        float minDist = Mathf.Infinity;
+
+        // Zmniejsz zasięg wzroku jeśli agent jest w dymie
+        float effectiveVisionRange = traits.VisionRange;
+        if (isInSmoke)
+        {
+            effectiveVisionRange *= smokeVisionReduction;
+        }
 
         foreach (var beacon in beacons)
         {
             if (!beacon.IsActive) continue;
             
-            float dst = Vector3.Distance(transform.position, beacon.Position);
-            if (dst <= traits.VisionRange)
+            float heightDiff = Mathf.Abs(beacon.Position.y - transform.position.y);
+            if (heightDiff > 2.2f) continue;
+            if (beacon.Position.y > transform.position.y + 0.5f) continue;
+
+            float pathDist = GetNavMeshPathDistance(transform.position, beacon.Position);          
+            if (pathDist == Mathf.Infinity) continue;
+            
+            if (pathDist <= effectiveVisionRange && pathDist < minDist && HasLineOfSight(beacon.Position))
             {
-                if (HasLineOfSight(beacon.Position))
-                {
-                    Vector3 toBeacon = (beacon.Position - transform.position).normalized;
-                    
-                    if (preferredDirection != Vector3.zero)
-                    {
-                        float alignment = Vector3.Dot(toBeacon, preferredDirection);
-                        
-                        if (alignment < -0.3f)
-                        {
-                            continue;
-                        }
-                    }
-                    
-                    float distanceScore = 1f - (dst / traits.VisionRange);
-                    
-                    float directionScore = 1f;
-                    if (preferredDirection != Vector3.zero)
-                    {
-                        directionScore = Vector3.Dot(toBeacon, preferredDirection);
-                        directionScore = Mathf.Max(0, directionScore);
-                    }
-                    
-                    float totalScore = distanceScore * 0.3f + directionScore * 0.7f;
-                    
-                    if (totalScore > bestScore)
-                    {
-                        bestScore = totalScore;
-                        best = beacon;
-                    }
-                }
+                    minDist = pathDist;
+                    best = beacon;
             }
         }
+        
         return best;
     }
 
-    private AgentController FindNearestEvacuatingAgent()
+    private float GetNavMeshPathDistance(Vector3 start, Vector3 end)
+    {
+        NavMeshPath path = new NavMeshPath();
+        
+        // Przyciągnij punkty do NavMesh
+        NavMeshHit startHit, endHit;
+        if (!NavMesh.SamplePosition(start, out startHit, 2f, NavMesh.AllAreas))
+            return Mathf.Infinity;
+        if (!NavMesh.SamplePosition(end, out endHit, 2f, NavMesh.AllAreas))
+            return Mathf.Infinity;
+        
+        // Oblicz ścieżkę
+        if (!NavMesh.CalculatePath(startHit.position, endHit.position, NavMesh.AllAreas, path))
+            return Mathf.Infinity;
+        
+        if (path.status != NavMeshPathStatus.PathComplete)
+            return Mathf.Infinity;
+        
+        // Oblicz długość ścieżki
+        float distance = 0f;
+        for (int i = 1; i < path.corners.Length; i++)
+        {
+            distance += Vector3.Distance(path.corners[i - 1], path.corners[i]);
+        }
+        
+        return distance;
+    }
+
+    private AgentController FindReliableAgentWithBeacon()
     {
         AgentController[] agents = FindObjectsByType<AgentController>(FindObjectsSortMode.None);
         AgentController best = null;
-        float minDst = Mathf.Infinity;
+        float minDist = Mathf.Infinity;
+        float maxTimeSinceBeacon = 10f; // Agent musi widzieć beacon max 10 sekund temu
 
         foreach (var other in agents)
         {
             if (other == this) continue;
             if (other.currentState != AgentState.Evacuating) continue;
-            
-            if (!other.navAgent.hasPath) continue;
-
-            float dst = Vector3.Distance(transform.position, other.transform.position);
-            if (dst <= traits.VisionRange && dst < minDst)
-            {
-                if (HasLineOfSight(other.transform.position))
-                {
-                    minDst = dst;
-                    best = other;
-                }
-            }
-        }
-        return best;
-    }
-
-    private AgentController FindNearestEvacuatingAgentWithBeacon()
-    {
-        AgentController[] agents = FindObjectsByType<AgentController>(FindObjectsSortMode.None);
-        AgentController best = null;
-        float minDst = Mathf.Infinity;
-
-        foreach (var other in agents)
-        {
-            if (other == this) continue;
-            if (other.currentState != AgentState.Evacuating) continue;
-            
             if (other.currentTargetBeacon == null) continue;
-            if (!other.navAgent.hasPath) continue;
+            if (other.timeSinceLastBeaconSeen > maxTimeSinceBeacon) continue;
 
-            float myDistToTarget = currentTargetBeacon != null ? Vector3.Distance(transform.position, currentTargetBeacon.Position) : Mathf.Infinity;
-            float theirDistToTarget = Vector3.Distance(other.transform.position, other.currentTargetBeacon.Position);
-
-            if (theirDistToTarget >= myDistToTarget) continue;
-
-            float dst = Vector3.Distance(transform.position, other.transform.position);
-            if (dst <= traits.VisionRange && dst < minDst)
+            float dist = Vector3.Distance(transform.position, other.transform.position);
+            
+            if (dist <= traits.VisionRange && dist < minDist)
             {
-                if (HasLineOfSight(other.transform.position))
-                {
-                    minDst = dst;
-                    best = other;
-                }
+                minDist = dist;
+                best = other;
             }
         }
+        
         return best;
     }
 
-    private AgentController FindNearestSightedEvacuatingAgent()
-    {
-        AgentController[] agents = FindObjectsByType<AgentController>(FindObjectsSortMode.None);
-        AgentController best = null;
-        float minDst = Mathf.Infinity;
-
-        foreach (var other in agents)
-        {
-            if (other == this) continue;
-            if (other.agentType == AgentType.Blind) continue;
-            if (other.currentState != AgentState.Evacuating) continue;
-            
-            bool hasBeacon = other.currentTargetBeacon != null;
-            
-            float dst = Vector3.Distance(transform.position, other.transform.position);
-            
-            if (dst <= traits.HearingRange && dst < minDst)
-            {
-                if (hasBeacon || best == null)
-                {
-                    minDst = dst;
-                    best = other;
-                }
-            }
-        }
-        return best;
-    }
-
-    private void OnCollisionEnter(Collision collision)
-    {
-        if (currentState != AgentState.Evacuating) return;
-
-        AgentController other = collision.gameObject.GetComponent<AgentController>();
-        if (other != null && other.currentState == AgentState.Evacuating)
-        {
-            ShareInfoWith(other);
-        }
-    }
-
-    private void ShareInfoWith(AgentController other)
-    {
-        if (currentTargetBeacon == null || currentTargetBeacon.NextBeacon == null) return;
-        if (other.currentTargetBeacon == null) return;
-
-        if (other.currentTargetBeacon == currentTargetBeacon.NextBeacon)
-        {
-            Debug.Log($"{name} received info from {other.name} (collision): Skipping {currentTargetBeacon.name}, going to {currentTargetBeacon.NextBeacon.name}");
-            currentTargetBeacon = currentTargetBeacon.NextBeacon;
-            navAgent.SetDestination(currentTargetBeacon.Position);
-        }
-    }
-
-    private bool IsNearAnyExit(Vector3 pos, float radius)
+    private Transform FindNearestExitNotAbove()
     {
         GameObject[] exits = GameObject.FindGameObjectsWithTag("Exit");
+        Transform nearest = null;
+        float minDist = Mathf.Infinity;
+
         foreach (var exit in exits)
         {
-            if (Vector3.Distance(pos, exit.transform.position) < radius) return true;
+            if (exit.transform.position.y > transform.position.y + 1f) continue;
+            
+            float dist = Vector3.Distance(transform.position, exit.transform.position);
+            if (dist < minDist)
+            {
+                minDist = dist;
+                nearest = exit.transform;
+            }
         }
-        return false;
+        
+        return nearest;
+    }
+
+    private Vector3? FindNearestCorridorPoint()
+    {
+        GameObject[] corridors = GameObject.FindGameObjectsWithTag("Corridor");
+        
+        if (corridors.Length == 0) return null;
+
+        Vector3? nearestPoint = null;
+        float minDist = Mathf.Infinity;
+
+        foreach (var corridor in corridors)
+        {
+            if (corridor.transform.position.y > transform.position.y + 1f) continue;
+
+            Collider corridorCollider = corridor.GetComponent<Collider>();
+            if (corridorCollider != null)
+            {
+                Vector3 closestPoint = corridorCollider.ClosestPoint(transform.position);
+                float dist = Vector3.Distance(transform.position, closestPoint);
+
+                if (dist < minDist)
+                {
+                    minDist = dist;
+                    nearestPoint = closestPoint;
+                }
+            }
+        }
+
+        return nearestPoint;
     }
 
     private Transform FindNearestExit()
@@ -448,46 +442,27 @@ public class AgentController : MonoBehaviour, IAlarmObserver
 
         foreach (var exit in exits)
         {
-            // Use NavMesh path distance for accuracy, or Euclidean for performance
-            float d = Vector3.Distance(transform.position, exit.transform.position);
-            if (d < minDist)
+            float dist = Vector3.Distance(transform.position, exit.transform.position);
+            if (dist < minDist)
             {
-                minDist = d;
+                minDist = dist;
                 nearest = exit.transform;
             }
         }
+        
         return nearest;
     }
 
-    private Transform FindNearestFinish()
+    private bool IsNearExit(Vector3 pos, float radius)
     {
-        GameObject[] finishes = GameObject.FindGameObjectsWithTag("Exit");
-        Transform nearest = null;
-        float minDist = Mathf.Infinity;
-
-        foreach (var finish in finishes)
+        GameObject[] exits = GameObject.FindGameObjectsWithTag("Exit");
+        foreach (var exit in exits)
         {
-            float d = Vector3.Distance(transform.position, finish.transform.position);
-            if (d < minDist)
-            {
-                minDist = d;
-                nearest = finish.transform;
-            }
-        }
-        return nearest;
-    }
-
-    private bool IsNearFinish(Vector3 pos, float radius)
-    {
-        GameObject[] finishes = GameObject.FindGameObjectsWithTag("Exit");
-        foreach (var finish in finishes)
-        {
-            if (Vector3.Distance(pos, finish.transform.position) < radius) return true;
+            if (Vector3.Distance(pos, exit.transform.position) < radius)
+                return true;
         }
         return false;
     }
-
-    // DetectFire removed - global alarm used instead
 
     private bool HasLineOfSight(Vector3 targetPos)
     {
@@ -503,9 +478,6 @@ public class AgentController : MonoBehaviour, IAlarmObserver
         }
         return true;
     }
-
-
-    private Bounds? wanderBounds = null;
 
     public void SetWanderBounds(Bounds bounds)
     {
@@ -532,29 +504,86 @@ public class AgentController : MonoBehaviour, IAlarmObserver
             targetPos.y = transform.position.y;
         }
 
-        UnityEngine.AI.NavMeshHit hit;
-        if (UnityEngine.AI.NavMesh.SamplePosition(targetPos, out hit, 5f, UnityEngine.AI.NavMesh.AllAreas))
+        NavMeshHit hit;
+        if (NavMesh.SamplePosition(targetPos, out hit, 5f, NavMesh.AllAreas))
         {
-            if (!IsNearAnyExit(hit.position, 5f))
+            if (!IsNearExit(hit.position, 5f))
             {
                 navAgent.SetDestination(hit.position);
             }
         }
     }
 
-    private bool IsNearExit(Vector3 position, float distance)
+    private void WanderAroundPanic()
     {
-        GameObject[] exits = GameObject.FindGameObjectsWithTag("Exit");
-        foreach (var exit in exits)
+        // Podczas paniki biegaj w losowym kierunku szukając beacona
+        float panicRadius = 20f; // Większy promień niż zwykłe wanderowanie
+        Vector3 targetPos = transform.position + Random.insideUnitSphere * panicRadius;
+        targetPos.y = transform.position.y;
+
+        NavMeshHit hit;
+        if (NavMesh.SamplePosition(targetPos, out hit, 10f, NavMesh.AllAreas))
         {
-            if (Vector3.Distance(position, exit.transform.position) < distance)
-            {
-                return true;
-            }
+            navAgent.SetDestination(hit.position);
         }
-        return false;
     }
 
-    public AgentType Type => agentType;
-    public AgentTraits Traits => traits;
+    private void ApplySmokeDisorientation()
+    {
+        // Zwiększ panikę w dymie
+        panicLevel += panicIncreaseRate * 2f * Time.deltaTime;
+        
+        // Losowa szansa na dezorientację
+        if (Random.value < smokeDisorientationChance * Time.deltaTime)
+        {
+            // Dezorientacja: losowe odchylenie od ścieżki
+            Vector3 randomOffset = Random.insideUnitSphere * 3f;
+            randomOffset.y = 0;
+            
+            Vector3 newDestination = transform.position + randomOffset;
+            
+            NavMeshHit hit;
+            if (NavMesh.SamplePosition(newDestination, out hit, 5f, NavMesh.AllAreas))
+            {
+                Debug.LogWarning($"{name} disoriented by smoke!");
+                navAgent.SetDestination(hit.position);
+            }
+        }
+        
+        // Losowa szansa na "kaszel" - krótkie zatrzymanie
+        if (Random.value < 0.05f * Time.deltaTime)
+        {
+            StartCoroutine(CoughInSmoke());
+        }
+    }
+
+    private IEnumerator CoughInSmoke()
+    {
+        float originalSpeed = navAgent.speed;
+        navAgent.speed = 0f; // Zatrzymaj się
+        Debug.Log($"{name} coughing in smoke!");
+        
+        yield return new WaitForSeconds(Random.Range(0.5f, 1.5f));
+        
+        navAgent.speed = originalSpeed;
+    }
+
+    // Triggerem wykrywaj dym (postaw BoxCollider z triggerem i tagiem "Smoke")
+    private void OnTriggerEnter(Collider other)
+    {
+        if (other.CompareTag("Smoke"))
+        {
+            isInSmoke = true;
+            Debug.Log($"{name} entered smoke area");
+        }
+    }
+
+    private void OnTriggerExit(Collider other)
+    {
+        if (other.CompareTag("Smoke"))
+        {
+            isInSmoke = false;
+            Debug.Log($"{name} left smoke area");
+        }
+    }
 }

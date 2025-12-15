@@ -90,12 +90,8 @@ public class AgentSpawner : MonoBehaviour
             
             if (IsPositionOnNavMesh(randomPos))
             {
-                // Randomize Agent Type
-                AgentType randomType;
-                do
-                {
-                    randomType = (AgentType)Random.Range(0, System.Enum.GetValues(typeof(AgentType)).Length);                   
-                }while(randomType == AgentType.Blind); // Exclude Blind for now
+                AgentType randomType = (AgentType)Random.Range(0, System.Enum.GetValues(typeof(AgentType)).Length);                   
+                
 
                 GameObject newAgent = agentFactory.CreateAgent(randomType, randomPos);
                 if (newAgent != null)

@@ -429,7 +429,7 @@ GameObject:
   m_Component:
   - component: {fileID: 9140002119646941324}
   - component: {fileID: 7365420052490157883}
-  - component: {fileID: 6456874769354466487}
+  - component: {fileID: -5560989044843770838}
   m_Layer: 0
   m_Name: Agent
   m_TagString: Player
@@ -477,7 +477,7 @@ NavMeshAgent:
   m_BaseOffset: 0
   m_WalkableMask: 4294967295
   m_ObstacleAvoidanceType: 3
---- !u!114 &6456874769354466487
+--- !u!114 &-5560989044843770838
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -486,8 +486,12 @@ MonoBehaviour:
   m_GameObject: {fileID: 8474682873070209590}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 4427e01d6d754724b89b89d6aac05cb8, type: 3}
+  m_Script: {fileID: 11500000, guid: 9271c2a2eb13e6742bf61a3caf9c4466, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::AgentMovement
-  UpdateSpeed: 0.1
-  arrivalDistance: 5
+  m_EditorClassIdentifier: Assembly-CSharp::AgentController
+  agentType: 0
+  traits:
+    MoveSpeed: 0
+    VisionRange: 0
+    HearingRange: 0
+    ReactionTime: 0

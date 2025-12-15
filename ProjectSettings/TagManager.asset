@@ -6,6 +6,7 @@ TagManager:
   tags:
   - Exit
   - Checkpoint
+  - Corridor
   layers:
   - Default
   - TransparentFX

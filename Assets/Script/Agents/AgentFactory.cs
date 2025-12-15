@@ -53,14 +53,14 @@ public class AgentFactory : MonoBehaviour, IAgentFactory
         {
             case AgentType.Adult:
                 speed = Random.Range(3.5f, 5.0f);
-                vision = Random.Range(10f, 15f);
+                vision = Random.Range(12f, 18f);
                 hearing = Random.Range(8f, 12f);
                 reaction = Random.Range(0.5f, 1.0f);
                 break;
 
             case AgentType.Child:
                 speed = Random.Range(2.5f, 4.0f); // Slower but energetic
-                vision = Random.Range(8f, 12f); // Lower vantage point?
+                vision = Random.Range(10f, 15f); // Lower vantage point?
                 hearing = Random.Range(10f, 14f); // Good hearing
                 reaction = Random.Range(0.8f, 1.5f); // Distracted?
                 break;
@@ -74,17 +74,16 @@ public class AgentFactory : MonoBehaviour, IAgentFactory
 
             case AgentType.Disabled:
                 speed = Random.Range(1.0f, 2.0f); // Very slow
-                vision = Random.Range(10f, 15f);
+                vision = Random.Range(12f, 18f);
                 hearing = Random.Range(8f, 12f);
                 reaction = Random.Range(1.0f, 2.0f);
                 break;
-
-            case AgentType.Blind:
-                speed = Random.Range(1.5f, 2.5f); // Cautious
-                vision = 0f; // Blind
-                hearing = Random.Range(15f, 25f); // Excellent hearing
-                reaction = Random.Range(0.5f, 1.0f);
-                break;
+            /*case AgentType.Tester:
+                speed = 5.0f;
+                vision = 25f;
+                hearing = 15f;
+                reaction = 0.5f;
+                break;*/
         }
 
         return new AgentTraits(speed, vision, hearing, reaction);
@@ -103,7 +102,6 @@ public class AgentFactory : MonoBehaviour, IAgentFactory
             case AgentType.Child: matToUse = childMaterial; break;
             case AgentType.Elderly: matToUse = elderlyMaterial; break;
             case AgentType.Disabled: matToUse = disabledMaterial; break;
-            case AgentType.Blind: matToUse = blindMaterial; break;
         }
 
         if (matToUse != null)

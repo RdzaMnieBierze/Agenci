@@ -82,7 +82,7 @@ public class TileDensityManager : MonoBehaviour
                 }
 
                 // Wizualizacja (opcjonalnie)
-                Debug.Log($"Tile {tilePos}: {agentCount} agentów (przepełniony {tileData.crowdedTime:F1}s)");
+                //Debug.Log($"Tile {tilePos}: {agentCount} agentów (przepełniony {tileData.crowdedTime:F1}s)");
             }
             else
             {
