@@ -7,6 +7,7 @@ public class EvacuationStats : MonoBehaviour
     [SerializeField] private TextMeshProUGUI removedText; // UI text dla usuniętych z zagęszczenia
     [SerializeField] private TextMeshProUGUI totalAgentsText; // UI text dla ogółu agentów
     [SerializeField] private TextMeshProUGUI timeText; // UI text dla czasu
+    [SerializeField] private TextMeshProUGUI deathsText; // UI text dla liczby zgonów
     
     [SerializeField] private Transform exitPoint; // Punkt wyjścia
     [SerializeField] private float exitDetectionRadius = 2f; // Promień detekcji wyjścia
@@ -18,6 +19,7 @@ public class EvacuationStats : MonoBehaviour
     private int totalAgentsSpawned = 0;
     private float elapsedTime = 0f;
     private bool isSimulationRunning = false;
+    private int deathsCount = 0;
 
     private void Update()
     {
@@ -36,7 +38,7 @@ public class EvacuationStats : MonoBehaviour
         if (exitPoint == null) return;
 
         // Znajdź wszystkich NavMeshAgents
-        UnityEngine.AI.NavMeshAgent[] allAgents = FindObjectsOfType<UnityEngine.AI.NavMeshAgent>();
+        UnityEngine.AI.NavMeshAgent[] allAgents = FindObjectsByType<UnityEngine.AI.NavMeshAgent>(FindObjectsSortMode.None);
 
         foreach (UnityEngine.AI.NavMeshAgent agent in allAgents)
         {
@@ -65,6 +67,12 @@ public class EvacuationStats : MonoBehaviour
         UpdateStatsDisplay();
     }
 
+    public void AddDeathInFire()
+    {
+        deathsCount++;
+        UpdateStatsDisplay();
+    }
+
     public void StartSimulation()
     {
         isSimulationRunning = true;
@@ -88,6 +96,9 @@ public class EvacuationStats : MonoBehaviour
 
         if (removedText != null)
             removedText.text = $"Usunięci (zabici): {removedCount}";
+
+        if (deathsText != null)
+            deathsText.text = $"Zgony w pożarze: {deathsCount}";
 
         if (totalAgentsText != null)
             totalAgentsText.text = $"Razem agentów: {totalAgentsSpawned}";

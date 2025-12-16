@@ -22,13 +22,7 @@ public class AgentController : MonoBehaviour, IAlarmObserver
     private float wanderInterval = 5f; // Zwiększone z 3 na 5 sekund
     private Bounds? wanderBounds = null;
     private float timeSinceLastBeaconSeen = 0f; // Czas od ostatniego zobaczenia beacona
-    #endregion
-    #region Panic System
-    [Header("Panic System")]
-    [SerializeField] private float panicLevel = 0f; // 0-1, gdzie 1 = pełna panika
-    [SerializeField] private float panicIncreaseRate = 0.05f; // Jak szybko rośnie panika
-    [SerializeField] private float panicDecreaseRate = 0.1f; // Jak szybko spada panika
-    [SerializeField] private float panicThreshold = 0.7f; // Próg paniki (>0.7 = panikuje)
+    private PanicSystem panicSystem = new PanicSystem();
     #endregion
     #region Smoke Disorientation
     [Header("Smoke Disorientation")]
@@ -41,6 +35,8 @@ public class AgentController : MonoBehaviour, IAlarmObserver
     public AgentTraits Traits => traits;
     public AgentState CurrentState => currentState;
     public float TimeSinceLastBeaconSeen => timeSinceLastBeaconSeen;
+    public NavMeshAgent NavAgent => navAgent;
+    public bool HasTargetBeacon => currentTargetBeacon != null;
     #endregion
 
     #region Unity Methods (Start, OnDestroy, Initialize)
@@ -144,7 +140,7 @@ public class AgentController : MonoBehaviour, IAlarmObserver
     {
         timeSinceLastBeaconSeen += Time.deltaTime;
         
-        UpdatePanicLevel();
+        panicSystem.UpdatePanicLevel(this, Time.deltaTime);
         
 
         if (IsNearExit(transform.position, 3f))
@@ -192,48 +188,10 @@ public class AgentController : MonoBehaviour, IAlarmObserver
             DecideEvacuationTarget();
         }
     }
-    // TODO: Ulepsz UpdatePanicLevel aby lepiej symulować panikę
-    private void UpdatePanicLevel()
-    {
-        // Panika ROŚNIE:
-        if (timeSinceLastBeaconSeen > 5f)
-            panicLevel += panicIncreaseRate * Time.deltaTime;
-        
-        if (!HasNearbyAgents(5f))
-            panicLevel += panicIncreaseRate * 0.5f * Time.deltaTime;
-        
-        if (!navAgent.hasPath)
-            panicLevel += panicIncreaseRate * 2f * Time.deltaTime;
-     
-        // Panika SPADA:
-        if (currentTargetBeacon != null && timeSinceLastBeaconSeen < 5f)
-            panicLevel -= panicDecreaseRate * Time.deltaTime;
-        
-        if (navAgent.hasPath && Vector3.Distance(transform.position, navAgent.destination) < traits.VisionRange)
-            panicLevel -= panicDecreaseRate * 0.5f * Time.deltaTime;
-
-        panicLevel = Mathf.Clamp01(panicLevel);
-        
-        // === EFEKTY PANIKI ===
-        if (panicLevel > panicThreshold)
-        {
-            // Przy wysokiej panice - zwiększ prędkość ale gorsze decyzje
-            navAgent.speed = traits.MoveSpeed * (1f + panicLevel * 0.25f);
-            
-            // Losowo zmieniaj kierunek
-            if (Random.value < 0.1f * panicLevel)
-            {
-                WanderAroundPanic();
-            }
-        }
-        else
-        {
-            navAgent.speed = traits.MoveSpeed;
-        }
-    }
+    
     
     // Sprawdza czy w pobliżu są inni agenci
-    private bool HasNearbyAgents(float radius)
+    public bool HasNearbyAgents(float radius)
     {
         AgentController[] agents = FindObjectsByType<AgentController>(FindObjectsSortMode.None);
         
@@ -531,7 +489,7 @@ public class AgentController : MonoBehaviour, IAlarmObserver
     private void ApplySmokeDisorientation()
     {
         // Zwiększ panikę w dymie
-        panicLevel += panicIncreaseRate * 2f * Time.deltaTime;
+        //panicLevel += panicIncreaseRate * 2f * Time.deltaTime;
         
         // Losowa szansa na dezorientację
         if (Random.value < smokeDisorientationChance * Time.deltaTime)
@@ -568,7 +526,6 @@ public class AgentController : MonoBehaviour, IAlarmObserver
         navAgent.speed = originalSpeed;
     }
 
-    // Triggerem wykrywaj dym (postaw BoxCollider z triggerem i tagiem "Smoke")
     private void OnTriggerEnter(Collider other)
     {
         if (other.CompareTag("Smoke"))

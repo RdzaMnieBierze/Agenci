@@ -6,9 +6,25 @@ public class FireManager : MonoBehaviour
 {
     [Header("Settings")]
     [SerializeField] private GameObject firePrefab;
-    [SerializeField] private List<BoxCollider> hazardZones; // Zones where fire can start
-    [SerializeField] private float spreadInterval = 5f;
-    [SerializeField] private int maxFireNodes = 50;
+    [SerializeField] private List<BoxCollider> hazardZones;
+    [SerializeField] private float spreadInterval = 2f;
+    private float initialSpreadInterval;
+    [SerializeField] private float spreadDecrement = 0.02f;
+    [SerializeField] private int maxFireNodes = 400;
+    
+    [Header("Spread Settings")]
+    [SerializeField] private float minDistanceBetweenFires = 0.5f; // Min odległość między ogniskami
+    [SerializeField] private float spreadRadius = 1.5f; // Promień rozprzestrzeniania
+    [SerializeField] private int maxSpreadAttempts = 5; // Max prób znalezienia dobrej pozycji
+    [SerializeField] private bool blockNavMesh = true; // Czy ogień ma blokować NavMesh
+    [SerializeField] private bool allowVerticalSpread = true; // Czy pozwolić na rozprzestrzenianie w pionie
+    [SerializeField] private float floorHeight = 2.2f; // Wys
+    [SerializeField] private float chanceToSpreadUp = 0.075f; // Szansa na rozprzestrzenianie w górę
+    [SerializeField] private float chanceToSpreadDown = 0.05f; // Szansa na rozprzestrzenianie w dół
+    
+    [Header("Agent Death Settings")]
+    [SerializeField] private float fireKillRadius = 0.5f; // Promień w którym agent umiera
+    [SerializeField] private float checkInterval = 0.2f; // Jak często sprawdzać agentów
 
     private List<GameObject> activeFires = new List<GameObject>();
     private bool fireStarted = false;
@@ -32,7 +48,6 @@ public class FireManager : MonoBehaviour
 
         if (hazardZones.Count == 0)
         {
-            // 1. Try to find objects with tag "HazardZone"
             GameObject[] taggedZones = GameObject.FindGameObjectsWithTag("HazardZone");
             foreach (var obj in taggedZones)
             {
@@ -40,46 +55,33 @@ public class FireManager : MonoBehaviour
                 if (col != null) hazardZones.Add(col);
             }
 
-            if (hazardZones.Count > 0)
+            if (hazardZones.Count == 0)
             {
-                Debug.Log($"FireManager: Found {hazardZones.Count} zones via 'HazardZone' tag.");
-            }
-            else
-            {
-                // 2. Fallback: Try to find colliders on this object or children
                 BoxCollider[] foundColliders = GetComponentsInChildren<BoxCollider>();
                 if (foundColliders.Length > 0)
                 {
                     hazardZones.AddRange(foundColliders);
-                    Debug.LogWarning($"FireManager: Found {foundColliders.Length} colliders on self/children.");
                 }
                 else
                 {
-                    Debug.LogError("FireManager: No Hazard Zones found! Tag objects with 'HazardZone' and add BoxCollider.");
+                    Debug.LogError("FireManager: No Hazard Zones found!");
                     return;
                 }
             }
         }
 
-        // Pick random zone
         BoxCollider zone = hazardZones[Random.Range(0, hazardZones.Count)];
         Vector3 spawnPos = GetRandomPointInCollider(zone);
-        Debug.Log($"FireManager: Spawning fire at {spawnPos} in zone {zone.name}");
 
         SpawnFireNode(spawnPos);
         
-        // IMMEDIATE GLOBAL ALARM - All agents evacuate immediately
         if (AlarmSystem.Instance != null)
         {
-            Debug.Log("FireManager: Triggering global alarm immediately!");
             AlarmSystem.Instance.TriggerAlarm(spawnPos);
-        }
-        else
-        {
-            Debug.LogError("FireManager: AlarmSystem not found! Agents won't react.");
         }
 
         StartCoroutine(SpreadFireRoutine());
+        StartCoroutine(CheckAgentsInFireRoutine());
     }
 
     private void SpawnFireNode(Vector3 position)
@@ -92,13 +94,20 @@ public class FireManager : MonoBehaviour
             return;
         }
 
-        // Add offset to ensure fire is visible above ground
-        //Vector3 spawnPos = position + Vector3.up * 0.5f;
-        Vector3 spawnPos = position;
-
-        GameObject fire = Instantiate(firePrefab, spawnPos, Quaternion.identity);
+        GameObject fire = Instantiate(firePrefab, position, Quaternion.identity);
         activeFires.Add(fire);
-        Debug.Log($"FireManager: Fire spawned at {spawnPos}. Total fires: {activeFires.Count}");
+        
+        
+        if (blockNavMesh)
+        {
+            var obstacle = fire.AddComponent<UnityEngine.AI.NavMeshObstacle>();
+            obstacle.carving = true;
+            obstacle.shape = UnityEngine.AI.NavMeshObstacleShape.Capsule;
+            obstacle.radius = 0.5f;
+            obstacle.height = 1f;
+        }
+        
+        Debug.Log($"FireManager: Fire spawned at {position}. Total: {activeFires.Count}");
     }
 
     private IEnumerator SpreadFireRoutine()
@@ -109,19 +118,194 @@ public class FireManager : MonoBehaviour
 
             if (activeFires.Count < maxFireNodes && activeFires.Count > 0)
             {
-                // Pick a random existing fire node and try to spread
+                // Wybierz losowe ognisko jako źródło
                 GameObject source = activeFires[Random.Range(0, activeFires.Count)];
-                Vector3 spreadPos = source.transform.position + Random.insideUnitSphere * 2f;
-                spreadPos.y = source.transform.position.y;
-
-                // Check if valid position (NavMesh)
-                /*if (IsPositionValid(spreadPos))
+                
+                // Zdecyduj czy rozprzestrzeniać poziomo czy pionowo
+                bool tryVerticalSpread = allowVerticalSpread && ShouldSpreadVertically();
+                
+                Vector3? spreadPos = null;
+                
+                if (tryVerticalSpread)
                 {
-                    SpawnFireNode(spreadPos);
-                }*/
-                SpawnFireNode(spreadPos);
+                    // Spróbuj rozprzestrzenić w pionie (góra/dół)
+                    spreadPos = TryVerticalSpread(source.transform.position);
+                }
+                
+                // Jeśli vertical spread się nie udał lub nie został wybrany, spróbuj poziomo
+                if (!spreadPos.HasValue)
+                {
+                    spreadPos = FindValidSpreadPosition(source.transform.position);
+                }
+                
+                if (spreadPos.HasValue)
+                {
+                    SpawnFireNode(spreadPos.Value);
+                    if (spreadInterval > spreadDecrement * 2f) 
+                        spreadInterval -= spreadDecrement;
+                }
+                else
+                {
+                    Debug.LogWarning("FireManager: Could not find valid spread position");
+                }
             }
         }
+    }
+
+    private bool ShouldSpreadVertically()
+    {
+        float randomValue = Random.value;
+        
+        // Sprawdź czy iść w dół
+        if (randomValue < chanceToSpreadDown)
+        {
+            return true;
+        }
+        
+        // Sprawdź czy iść w górę
+        if (randomValue < chanceToSpreadDown + chanceToSpreadUp)
+        {
+            return true;
+        }
+        
+        return false;
+    }
+
+    private Vector3? TryVerticalSpread(Vector3 sourcePos)
+    {
+        float randomValue = Random.value;
+        float totalChance = chanceToSpreadDown + chanceToSpreadUp;
+        
+        // Określ kierunek (dół ma większy priorytet)
+        bool spreadDown = randomValue < (chanceToSpreadDown / totalChance);
+        
+        float verticalOffset = spreadDown ? -floorHeight : floorHeight;
+        
+        // Spróbuj kilka pozycji na innym piętrze
+        for (int attempt = 0; attempt < maxSpreadAttempts; attempt++)
+        {
+            // Dodaj małe losowe przesunięcie poziome (ogień nie pada dokładnie w dół)
+            Vector2 randomOffset = Random.insideUnitCircle * spreadRadius * 0.5f;
+            
+            Vector3 candidatePos = sourcePos + new Vector3(
+                randomOffset.x,
+                verticalOffset,
+                randomOffset.y
+            );
+            
+            // Sprawdź czy na tym piętrze jest NavMesh
+            if (!IsPositionValid(candidatePos)) continue;
+            
+            // Sprawdź czy nie jest za blisko innych ogni
+            if (IsTooCloseToOtherFires(candidatePos)) continue;
+            
+            // Sprawdź czy faktycznie jest na innym piętrze
+            float heightDiff = Mathf.Abs(candidatePos.y - sourcePos.y);
+            if (heightDiff < floorHeight * 0.8f) continue; // Minimum 80% wysokości piętra
+            
+            Debug.Log($"FireManager: Fire spreading {(spreadDown ? "DOWN" : "UP")} to another floor!");
+            return candidatePos;
+        }
+        
+        return null;
+    }
+
+    private IEnumerator CheckAgentsInFireRoutine()
+    {
+        while (fireStarted)
+        {
+            yield return new WaitForSeconds(checkInterval);
+
+            // Znajdź wszystkich agentów
+            AgentController[] agents = FindObjectsByType<AgentController>(FindObjectsSortMode.None);
+
+            foreach (var agent in agents)
+            {
+                if (agent == null || !agent.gameObject.activeInHierarchy) continue;
+
+                // Sprawdź czy agent jest w zasięgu jakiegoś ognia
+                if (IsAgentInFire(agent.transform.position))
+                {
+                    KillAgent(agent);
+                }
+            }
+        }
+    }
+
+    private bool IsAgentInFire(Vector3 agentPos)
+    {
+        foreach (var fire in activeFires)
+        {
+            if (fire == null) continue;
+
+            float distance = Vector3.Distance(agentPos, fire.transform.position);
+            if (distance <= fireKillRadius)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void KillAgent(AgentController agent)
+    {
+        Debug.LogWarning($"FireManager: Agent {agent.name} died in fire!");
+
+        // Powiadom EvacuationStats
+        EvacuationStats stats = FindAnyObjectByType<EvacuationStats>();
+        if (stats != null)
+        {
+            stats.AddDeathInFire();
+        }
+
+        // Usuń agenta
+        Destroy(agent.gameObject);
+    }
+
+    private Vector3? FindValidSpreadPosition(Vector3 sourcePos)
+    {
+        for (int attempt = 0; attempt < maxSpreadAttempts; attempt++)
+        {
+            // Losowy kierunek w płaszczyźnie XZ
+            Vector2 randomDir = Random.insideUnitCircle.normalized;
+            float randomDist = Random.Range(minDistanceBetweenFires, spreadRadius);
+            
+            Vector3 candidatePos = sourcePos + new Vector3(
+                randomDir.x * randomDist,
+                0,
+                randomDir.y * randomDist
+            );
+            
+            candidatePos.y = sourcePos.y; // Zachowaj wysokość źródła
+
+            // Sprawdź czy pozycja jest na NavMesh
+            if (!IsPositionValid(candidatePos)) continue;
+            
+            // Sprawdź czy nie jest za blisko innych ogni
+            if (IsTooCloseToOtherFires(candidatePos)) continue;
+            
+            // Znaleziono dobrą pozycję!
+            return candidatePos;
+        }
+        
+        return null; // Nie znaleziono dobrej pozycji po maxSpreadAttempts próbach
+    }
+
+    private bool IsTooCloseToOtherFires(Vector3 position)
+    {
+        foreach (var fire in activeFires)
+        {
+            if (fire == null) continue;
+            
+            float distance = Vector3.Distance(position, fire.transform.position);
+            if (distance < minDistanceBetweenFires)
+            {
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     private Vector3 GetRandomPointInCollider(BoxCollider collider)
@@ -144,15 +328,67 @@ public class FireManager : MonoBehaviour
 
     public void ResetFire()
     {
-        // Stop spreading
         StopAllCoroutines();
         
-        // Clear fire list
-        activeFires.Clear();
+        // Usuń wszystkie ogniska
+        foreach (var fire in activeFires)
+        {
+            if (fire != null)
+                Destroy(fire);
+        }
         
-        // Reset state
+        activeFires.Clear();
         fireStarted = false;
+        spreadInterval = initialSpreadInterval;
         
         Debug.Log("FireManager: Reset complete.");
+    }
+    
+    // Debug visualization
+    private void OnDrawGizmos()
+    {
+        if (!Application.isPlaying) return;
+        
+        // Czerwone kółka - min distance between fires
+        Gizmos.color = Color.red;
+        foreach (var fire in activeFires)
+        {
+            if (fire != null)
+            {
+                Gizmos.DrawWireSphere(fire.transform.position, minDistanceBetweenFires);
+            }
+        }
+        
+        // Żółte kółka - kill radius
+        Gizmos.color = Color.yellow;
+        foreach (var fire in activeFires)
+        {
+            if (fire != null)
+            {
+                Gizmos.DrawWireSphere(fire.transform.position, fireKillRadius);
+            }
+        }
+        
+        // Niebieskie linie pokazujące wysokość pięter
+        if (allowVerticalSpread && activeFires.Count > 0)
+        {
+            Gizmos.color = new Color(0, 0.5f, 1f, 0.3f); // Przezroczysty niebieski
+            
+            foreach (var fire in activeFires)
+            {
+                if (fire != null)
+                {
+                    // Linia w górę
+                    Vector3 upperFloor = fire.transform.position + Vector3.up * floorHeight;
+                    Gizmos.DrawLine(fire.transform.position, upperFloor);
+                    Gizmos.DrawWireSphere(upperFloor, 0.3f);
+                    
+                    // Linia w dół
+                    Vector3 lowerFloor = fire.transform.position + Vector3.down * floorHeight;
+                    Gizmos.DrawLine(fire.transform.position, lowerFloor);
+                    Gizmos.DrawWireSphere(lowerFloor, 0.3f);
+                }
+            }
+        }
     }
 }
