@@ -67,5 +67,5 @@
         "*.sln": "*.csproj",
         "*.slnx": "*.csproj"
     },
-    "dotnet.defaultSolution": "Agenci.slnx"
+    "dotnet.defaultSolution": "Agenci2.slnx"
 }
