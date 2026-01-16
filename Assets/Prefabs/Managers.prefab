@@ -197,7 +197,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a44b653bf40bea1439a6e4d99563893a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TileDensityManager
-  tileSize: 1
+  tileSize: 1.2
   maxAgentsPerTile: 2
   penaltyDuration: 2
   slowdownSpeed: 2
@@ -317,6 +317,7 @@ MonoBehaviour:
   removedText: {fileID: 0}
   totalAgentsText: {fileID: 0}
   timeText: {fileID: 0}
+  deathsText: {fileID: 0}
   exitPoint: {fileID: 0}
   exitDetectionRadius: 3
   tileDensityManager: {fileID: 8336591687533061710}
@@ -431,8 +432,19 @@ MonoBehaviour:
   - {fileID: 0}
   - {fileID: 0}
   - {fileID: 0}
-  spreadInterval: 5
-  maxFireNodes: 50
+  spreadInterval: 1.5
+  spreadDecrement: 0.02
+  maxFireNodes: 1000
+  minDistanceBetweenFires: 0.5
+  spreadRadius: 1.5
+  maxSpreadAttempts: 5
+  blockNavMesh: 1
+  allowVerticalSpread: 1
+  floorHeight: 2.2
+  chanceToSpreadUp: 0.1
+  chanceToSpreadDown: 0.1
+  fireKillRadius: 1.15
+  checkInterval: 0.2
 --- !u!1 &8364899499048352878
 GameObject:
   m_ObjectHideFlags: 0

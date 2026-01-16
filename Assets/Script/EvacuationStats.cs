@@ -39,6 +39,8 @@ public class EvacuationStats : MonoBehaviour
 
         // Znajdź wszystkich NavMeshAgents
         UnityEngine.AI.NavMeshAgent[] allAgents = FindObjectsByType<UnityEngine.AI.NavMeshAgent>(FindObjectsSortMode.None);
+        if (allAgents == null || allAgents.Length == 0) return;
+
 
         foreach (UnityEngine.AI.NavMeshAgent agent in allAgents)
         {
@@ -79,6 +81,7 @@ public class EvacuationStats : MonoBehaviour
         elapsedTime = 0f;
         evacuatedCount = 0;
         removedCount = 0;
+        deathsCount = 0;
         Debug.Log("Symulacja ewakuacji rozpoczęta!");
         UpdateStatsDisplay();
     }

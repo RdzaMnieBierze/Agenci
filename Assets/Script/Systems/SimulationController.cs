@@ -80,6 +80,21 @@ public class SimulationController : MonoBehaviour
         }
     }
 
+    private void Update()
+    {
+        if (fireStarted)
+        {
+            AgentController[] agents = FindObjectsByType<AgentController>(FindObjectsSortMode.None);
+            if (agents == null || agents.Length == 0)
+            {
+                UpdateStatus("✅ Wszyscy agenci ewakuowani lub usunięci. Symulacja zakończona.", Color.green);
+                fireStarted = false;
+                evacuationStats.StopSimulation();
+                fireManager.fireStarted = false;
+                return;
+            }
+        }
+    }
     private void UpdateStatus(string message, Color color)
     {
         if (statusText != null)

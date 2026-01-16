@@ -8,7 +8,7 @@ public class FireManager : MonoBehaviour
     [SerializeField] private GameObject firePrefab;
     [SerializeField] private List<BoxCollider> hazardZones;
     [SerializeField] private float spreadInterval = 2f;
-    private float initialSpreadInterval;
+    [SerializeField] private float initialSpreadInterval;
     [SerializeField] private float spreadDecrement = 0.02f;
     [SerializeField] private int maxFireNodes = 400;
     
@@ -27,7 +27,7 @@ public class FireManager : MonoBehaviour
     [SerializeField] private float checkInterval = 0.2f; // Jak często sprawdzać agentów
 
     private List<GameObject> activeFires = new List<GameObject>();
-    private bool fireStarted = false;
+    public bool fireStarted = false;
 
     public void StartFire()
     {
@@ -38,6 +38,7 @@ public class FireManager : MonoBehaviour
         }
         
         fireStarted = true;
+        initialSpreadInterval = spreadInterval;
         Debug.Log("FireManager: Starting fire...");
 
         if (firePrefab == null)

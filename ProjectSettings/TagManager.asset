@@ -7,6 +7,7 @@ TagManager:
   - Exit
   - Checkpoint
   - Corridor
+  - HazardZone
   layers:
   - Default
   - TransparentFX

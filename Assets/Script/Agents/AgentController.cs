@@ -11,6 +11,7 @@ public class AgentController : MonoBehaviour, IAlarmObserver
     [SerializeField] private AgentTraits traits;
     private NavMeshAgent navAgent;
     private AgentState currentState = AgentState.Wandering;
+    
     public enum AgentState
     {
         Wandering,
@@ -19,18 +20,22 @@ public class AgentController : MonoBehaviour, IAlarmObserver
 
     private EvacuationBeacon currentTargetBeacon = null;
     private float wanderTimer = 0f;
-    private float wanderInterval = 5f; // Zwiększone z 3 na 5 sekund
+    private float wanderInterval = 5f;
     private Bounds? wanderBounds = null;
-    private float timeSinceLastBeaconSeen = 0f; // Czas od ostatniego zobaczenia beacona
+    private float timeSinceLastBeaconSeen = 0f;
     private PanicSystem panicSystem = new PanicSystem();
+    
+    [Header("Room/Wandering System")]
+    [SerializeField] private float minTimeInRoom = 5f;
+    [SerializeField] private float maxTimeInRoom = 20f;
+    [SerializeField] private float chanceToChangeRoom = 0.4f;
+    
+    private BoxCollider currentRoom = null;
+    private float timeInCurrentRoom = 0f;
+    private float targetTimeInRoom;
     #endregion
-    #region Smoke Disorientation
-    [Header("Smoke Disorientation")]
-    [SerializeField] private bool isInSmoke = false;
-    [SerializeField] private float smokeDisorientationChance = 0.3f; // 30% szans na dezorientację
-    [SerializeField] private float smokeVisionReduction = 0.5f; // Zmniejszenie zasięgu wzroku o 50%
-    #endregion
-    #region  Publiczne properties
+
+    #region Publiczne properties
     public AgentType Type => agentType;
     public AgentTraits Traits => traits;
     public AgentState CurrentState => currentState;
@@ -52,8 +57,20 @@ public class AgentController : MonoBehaviour, IAlarmObserver
             AlarmSystem.Instance.RegisterObserver(this);
         }
 
-        wanderTimer = Random.Range(0f, wanderInterval);
-        WanderAround();
+        wanderTimer = Random.Range(1f, wanderInterval);
+        
+        // Znajdź najbliższy pokój i zacznij w nim
+        currentRoom = FindNearestRoom();
+        if (currentRoom != null)
+        {
+            targetTimeInRoom = Random.Range(minTimeInRoom, maxTimeInRoom);
+            WanderInCurrentRoom();
+        }
+        else
+        {
+            // Fallback - zwykłe wandering
+            WanderAround();
+        }
     }
 
     private void OnDestroy()
@@ -90,23 +107,18 @@ public class AgentController : MonoBehaviour, IAlarmObserver
     }
     #endregion
 
-    // Reakcja na alarm
     public void OnAlarmTriggered(Vector3 alarmPosition)
     {
         if (currentState == AgentState.Evacuating) return;
-
         StartCoroutine(ReactToAlarm(traits.ReactionTime));
     }
 
     private IEnumerator ReactToAlarm(float delay)
     {
         yield return new WaitForSeconds(delay);
-        
-        Debug.Log($"{name} heard alarm! Starting evacuation!");
         currentState = AgentState.Evacuating;
     }
 
-    // Odpalanie Update zaleznie od stanu
     private void Update()
     {
         if (currentState == AgentState.Wandering)
@@ -116,14 +128,13 @@ public class AgentController : MonoBehaviour, IAlarmObserver
         else if (currentState == AgentState.Evacuating)
         {
             UpdateEvacuating();
-            if (isInSmoke)
-                ApplySmokeDisorientation();
         }
     }
 
     private void UpdateWandering()
     {
         wanderTimer += Time.deltaTime;
+        timeInCurrentRoom += Time.deltaTime;
         
         bool needsNewDestination = !navAgent.hasPath || 
                                    navAgent.remainingDistance < 1.5f ||
@@ -132,16 +143,37 @@ public class AgentController : MonoBehaviour, IAlarmObserver
         if (needsNewDestination)
         {
             wanderTimer = 0f;
-            WanderAround();
+            
+            // Sprawdź czy czas zmienić pokój
+            if (timeInCurrentRoom >= targetTimeInRoom)
+            {
+                // Losuj czy zmienić pokój (25% szans)
+                if (Random.value < chanceToChangeRoom)
+                {
+                    Debug.Log($"{name} changing room");
+                    MoveToNewRoom();
+                }
+                else
+                {
+                    // Zostań w pokoju, resetuj czas
+                    Debug.Log($"{name} staying in room");
+                    timeInCurrentRoom = 0f;
+                    targetTimeInRoom = Random.Range(minTimeInRoom, maxTimeInRoom);
+                    WanderInCurrentRoom();
+                }
+            }
+            else
+            {
+                // Wciąż w pokoju - pokreć się trochę
+                WanderInCurrentRoom();
+            }
         }
     }
 
     private void UpdateEvacuating()
     {
-        timeSinceLastBeaconSeen += Time.deltaTime;
-        
+        timeSinceLastBeaconSeen += Time.deltaTime;       
         panicSystem.UpdatePanicLevel(this, Time.deltaTime);
-        
 
         if (IsNearExit(transform.position, 3f))
         {
@@ -150,67 +182,49 @@ public class AgentController : MonoBehaviour, IAlarmObserver
             return;
         }
 
-        if (currentTargetBeacon != null && navAgent.hasPath)
+        if (currentTargetBeacon != null)
         {
-            float heightDiff = Mathf.Abs(currentTargetBeacon.Position.y - transform.position.y);
-            float horizontalDist = Vector3.Distance(
-                new Vector3(transform.position.x, 0, transform.position.z),
-                new Vector3(currentTargetBeacon.Position.x, 0, currentTargetBeacon.Position.z)
-            );
+            bool beaconReached = navAgent.hasPath && navAgent.remainingDistance < 1.5f && !navAgent.pathPending;
             
-            if (heightDiff < 0.75f && horizontalDist < 3f)
+            if (beaconReached)
             {
                 timeSinceLastBeaconSeen = 0f;
+                Debug.Log($"{name} reached beacon {currentTargetBeacon.name}");
                 
                 if (currentTargetBeacon.NextBeacon != null)
                 {
-                    Debug.Log($"{name} reached beacon, moving to next: {currentTargetBeacon.NextBeacon.name}");
                     currentTargetBeacon = currentTargetBeacon.NextBeacon;
                     navAgent.SetDestination(currentTargetBeacon.Position);
+                    Debug.Log($"{name} moving to next beacon: {currentTargetBeacon.name}");
+                    return;
                 }
                 else
                 {
-                    Debug.Log($"{name} reached last beacon, heading to exit");
+                    Debug.Log($"{name} reached final beacon, looking for exit");
                     currentTargetBeacon = null;
-                    Transform exit = FindNearestExit();
-                    if (exit != null)
-                    {
-                        navAgent.SetDestination(exit.position);
-                    }
+                    DecideEvacuationTarget();
+                    return;
                 }
-                return;
             }
         }
 
-        
-        if (!navAgent.hasPath || navAgent.remainingDistance < 1f)
+        if (!navAgent.hasPath || navAgent.pathPending)
         {
             DecideEvacuationTarget();
         }
     }
-    
-    
-    // Sprawdza czy w pobliżu są inni agenci
-    public bool HasNearbyAgents(float radius)
+
+    private void DecideEvacuationTarget()
     {
-        AgentController[] agents = FindObjectsByType<AgentController>(FindObjectsSortMode.None);
-        
-        foreach (var other in agents)
+        if (currentTargetBeacon != null && currentTargetBeacon.IsActive)
         {
-            if (other == this) continue;
-            if (Vector3.Distance(transform.position, other.transform.position) < radius)
+            float pathDist = GetNavMeshPathDistance(transform.position, currentTargetBeacon.Position);
+            if (pathDist != Mathf.Infinity && navAgent.hasPath && navAgent.remainingDistance > 1.5f)
             {
-                return true;
+                return;
             }
         }
         
-        return false;
-    }
-
-    // JESLI AGENT NIE MA BEACONA
-    private void DecideEvacuationTarget()
-    {
-        // PRIORYTET 1: Szukaj widocznego beacona
         EvacuationBeacon visibleBeacon = FindNearestVisibleBeacon();
         if (visibleBeacon != null)
         {
@@ -221,36 +235,16 @@ public class AgentController : MonoBehaviour, IAlarmObserver
             return;
         }
 
-        // PRIORYTET 2: Jeśli nie widzi beacona - idź na korytarz
         Vector3? corridorPoint = FindNearestCorridorPoint();
-        if (corridorPoint.HasValue)
+        if (corridorPoint.HasValue && Vector3.Distance(transform.position, corridorPoint.Value) > 0.2f)
         {
             Debug.Log($"{name} heading to corridor to find beacon");
             navAgent.SetDestination(corridorPoint.Value);
             return;
         }
 
-        // PRIORYTET 3: Podążaj za agentem który zna drogę
-        AgentController leader = FindReliableAgentWithBeacon();
-        if (leader != null)
-        {
-            Debug.Log($"{name} following {leader.name} who recently saw beacon");
-            navAgent.SetDestination(leader.transform.position);
-            return;
-        }
-
-        // PRIORYTET 4: Szukaj Exit bezpośrednio
-        Transform exit = FindNearestExitNotAbove();
-        if (exit != null && Vector3.Distance(transform.position, exit.position) < traits.VisionRange)
-        {
-            Debug.Log($"{name} heading directly to exit");
-            navAgent.SetDestination(exit.position);
-            return;
-        }
-
-        // PRIORYTET 5: Biegaj losowo i szukaj beacona
-        Debug.LogWarning($"{name} lost! Running randomly to find beacon");
-        WanderAroundPanic();
+        Debug.LogWarning($"{name} wandering on corridor looking for beacon");
+        WanderAroundOnCorridor();
     }
 
     private EvacuationBeacon FindNearestVisibleBeacon()
@@ -259,28 +253,23 @@ public class AgentController : MonoBehaviour, IAlarmObserver
         EvacuationBeacon best = null;
         float minDist = Mathf.Infinity;
 
-        // Zmniejsz zasięg wzroku jeśli agent jest w dymie
-        float effectiveVisionRange = traits.VisionRange;
-        if (isInSmoke)
-        {
-            effectiveVisionRange *= smokeVisionReduction;
-        }
+        float extendedVisionRange = traits.VisionRange * 1.5f;
 
         foreach (var beacon in beacons)
         {
             if (!beacon.IsActive) continue;
             
-            float heightDiff = Mathf.Abs(beacon.Position.y - transform.position.y);
-            if (heightDiff > 2.2f) continue;
-            if (beacon.Position.y > transform.position.y + 0.5f) continue;
+            if (beacon.Position.y > transform.position.y + 2.2f) continue;
 
             float pathDist = GetNavMeshPathDistance(transform.position, beacon.Position);          
             if (pathDist == Mathf.Infinity) continue;
             
-            if (pathDist <= effectiveVisionRange && pathDist < minDist && HasLineOfSight(beacon.Position))
+            if (!HasLineOfSight(beacon.Position)) continue;
+            
+            if (pathDist <= extendedVisionRange && pathDist < minDist)
             {
-                    minDist = pathDist;
-                    best = beacon;
+                minDist = pathDist;
+                best = beacon;
             }
         }
         
@@ -291,21 +280,18 @@ public class AgentController : MonoBehaviour, IAlarmObserver
     {
         NavMeshPath path = new NavMeshPath();
         
-        // Przyciągnij punkty do NavMesh
         NavMeshHit startHit, endHit;
         if (!NavMesh.SamplePosition(start, out startHit, 2f, NavMesh.AllAreas))
             return Mathf.Infinity;
         if (!NavMesh.SamplePosition(end, out endHit, 2f, NavMesh.AllAreas))
             return Mathf.Infinity;
         
-        // Oblicz ścieżkę
         if (!NavMesh.CalculatePath(startHit.position, endHit.position, NavMesh.AllAreas, path))
             return Mathf.Infinity;
         
         if (path.status != NavMeshPathStatus.PathComplete)
             return Mathf.Infinity;
         
-        // Oblicz długość ścieżki
         float distance = 0f;
         for (int i = 1; i < path.corners.Length; i++)
         {
@@ -315,51 +301,36 @@ public class AgentController : MonoBehaviour, IAlarmObserver
         return distance;
     }
 
-    private AgentController FindReliableAgentWithBeacon()
+    private bool HasLineOfSight(Vector3 targetPos)
     {
-        AgentController[] agents = FindObjectsByType<AgentController>(FindObjectsSortMode.None);
-        AgentController best = null;
-        float minDist = Mathf.Infinity;
-        float maxTimeSinceBeacon = 10f; // Agent musi widzieć beacon max 10 sekund temu
-
-        foreach (var other in agents)
+        Vector3 direction = targetPos - transform.position;
+        float distance = direction.magnitude;
+        
+        if (distance < 0.1f) return true;
+        
+        RaycastHit[] hits = Physics.RaycastAll(
+            transform.position + Vector3.up * 0.6f, 
+            direction.normalized, 
+            distance
+        );
+        
+        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+        
+        foreach (RaycastHit hit in hits)
         {
-            if (other == this) continue;
-            if (other.currentState != AgentState.Evacuating) continue;
-            if (other.currentTargetBeacon == null) continue;
-            if (other.timeSinceLastBeaconSeen > maxTimeSinceBeacon) continue;
-
-            float dist = Vector3.Distance(transform.position, other.transform.position);
+            if (hit.collider.isTrigger)
+                continue;
             
-            if (dist <= traits.VisionRange && dist < minDist)
+            EvacuationBeacon beaconHit = hit.collider.GetComponent<EvacuationBeacon>();
+            if (beaconHit != null && Vector3.Distance(beaconHit.Position, targetPos) < 0.5f)
             {
-                minDist = dist;
-                best = other;
+                return true;
             }
+            
+            return false;
         }
         
-        return best;
-    }
-
-    private Transform FindNearestExitNotAbove()
-    {
-        GameObject[] exits = GameObject.FindGameObjectsWithTag("Exit");
-        Transform nearest = null;
-        float minDist = Mathf.Infinity;
-
-        foreach (var exit in exits)
-        {
-            if (exit.transform.position.y > transform.position.y + 1f) continue;
-            
-            float dist = Vector3.Distance(transform.position, exit.transform.position);
-            if (dist < minDist)
-            {
-                minDist = dist;
-                nearest = exit.transform;
-            }
-        }
-        
-        return nearest;
+        return true;
     }
 
     private Vector3? FindNearestCorridorPoint()
@@ -392,25 +363,6 @@ public class AgentController : MonoBehaviour, IAlarmObserver
         return nearestPoint;
     }
 
-    private Transform FindNearestExit()
-    {
-        GameObject[] exits = GameObject.FindGameObjectsWithTag("Exit");
-        Transform nearest = null;
-        float minDist = Mathf.Infinity;
-
-        foreach (var exit in exits)
-        {
-            float dist = Vector3.Distance(transform.position, exit.transform.position);
-            if (dist < minDist)
-            {
-                minDist = dist;
-                nearest = exit.transform;
-            }
-        }
-        
-        return nearest;
-    }
-
     private bool IsNearExit(Vector3 pos, float radius)
     {
         GameObject[] exits = GameObject.FindGameObjectsWithTag("Exit");
@@ -420,21 +372,6 @@ public class AgentController : MonoBehaviour, IAlarmObserver
                 return true;
         }
         return false;
-    }
-
-    private bool HasLineOfSight(Vector3 targetPos)
-    {
-        Vector3 direction = targetPos - transform.position;
-        float distance = direction.magnitude;
-        
-        if (Physics.Raycast(transform.position + Vector3.up, direction, out RaycastHit hit, distance))
-        {
-            if (hit.collider.gameObject.layer == LayerMask.NameToLayer("Default") && !hit.collider.isTrigger)
-            {
-                return false;
-            }
-        }
-        return true;
     }
 
     public void SetWanderBounds(Bounds bounds)
@@ -472,10 +409,25 @@ public class AgentController : MonoBehaviour, IAlarmObserver
         }
     }
 
+    private void WanderAroundOnCorridor()
+    {
+        float wanderRadius = 10f;
+        Vector3 randomPoint = transform.position + Random.insideUnitSphere * Random.Range(5f, wanderRadius);
+        randomPoint.y = transform.position.y;
+        
+        NavMeshHit hit;
+        if (NavMesh.SamplePosition(randomPoint, out hit, 5f, NavMesh.AllAreas))
+        {
+            if (!IsNearExit(hit.position, 5f))
+            {
+                navAgent.SetDestination(hit.position);
+            }
+        }
+    }
+
     private void WanderAroundPanic()
     {
-        // Podczas paniki biegaj w losowym kierunku szukając beacona
-        float panicRadius = 20f; // Większy promień niż zwykłe wanderowanie
+        float panicRadius = 20f;
         Vector3 targetPos = transform.position + Random.insideUnitSphere * panicRadius;
         targetPos.y = transform.position.y;
 
@@ -486,61 +438,173 @@ public class AgentController : MonoBehaviour, IAlarmObserver
         }
     }
 
-    private void ApplySmokeDisorientation()
+    private BoxCollider FindNearestRoom()
     {
-        // Zwiększ panikę w dymie
-        //panicLevel += panicIncreaseRate * 2f * Time.deltaTime;
+        GameObject[] rooms = GameObject.FindGameObjectsWithTag("HazardZone");
         
-        // Losowa szansa na dezorientację
-        if (Random.value < smokeDisorientationChance * Time.deltaTime)
+        if (rooms.Length == 0)
         {
-            // Dezorientacja: losowe odchylenie od ścieżki
-            Vector3 randomOffset = Random.insideUnitSphere * 3f;
-            randomOffset.y = 0;
-            
-            Vector3 newDestination = transform.position + randomOffset;
-            
-            NavMeshHit hit;
-            if (NavMesh.SamplePosition(newDestination, out hit, 5f, NavMesh.AllAreas))
+            Debug.LogWarning($"{name}: No HazardZones found!");
+            return null;
+        }
+
+        BoxCollider nearest = null;
+        float minDist = Mathf.Infinity;
+
+        foreach (var room in rooms)
+        {
+            BoxCollider roomCollider = room.GetComponent<BoxCollider>();
+            if (roomCollider == null) continue;
+
+            float heightDiff = Mathf.Abs(roomCollider.bounds.center.y - transform.position.y);
+            if (heightDiff > 2f) continue;
+
+            float dist = Vector3.Distance(transform.position, roomCollider.bounds.center);
+            if (dist < minDist)
             {
-                Debug.LogWarning($"{name} disoriented by smoke!");
-                navAgent.SetDestination(hit.position);
+                minDist = dist;
+                nearest = roomCollider;
+            }
+        }
+
+        return nearest;
+    }
+
+    private void WanderInCurrentRoom()
+    {
+        if (currentRoom == null)
+        {
+            currentRoom = FindNearestRoom();
+            if (currentRoom == null)
+            {
+                WanderAround();
+                return;
+            }
+        }
+
+        Vector3 targetPos = GetRandomPointInRoom(currentRoom);
+
+        NavMeshHit hit;
+        if (NavMesh.SamplePosition(targetPos, out hit, 5f, NavMesh.AllAreas))
+        {
+            navAgent.SetDestination(hit.position);
+            Debug.Log($"{name} wandering in room {currentRoom.name}");
+        }
+        else
+        {
+            Debug.LogWarning($"{name}: No NavMesh in room {currentRoom.name}, finding new room");
+            MoveToNewRoom();
+        }
+    }
+
+    private void MoveToNewRoom()
+    {
+        GameObject[] rooms = GameObject.FindGameObjectsWithTag("HazardZone");
+        
+        if (rooms.Length == 0)
+        {
+            WanderAround();
+            return;
+        }
+
+        var availableRooms = new System.Collections.Generic.List<BoxCollider>();
+        
+        foreach (var room in rooms)
+        {
+            BoxCollider roomCollider = room.GetComponent<BoxCollider>();
+            if (roomCollider == null || roomCollider == currentRoom) continue;
+
+            float heightDiff = Mathf.Abs(roomCollider.bounds.center.y - transform.position.y);
+            if (heightDiff > 2f) continue;
+
+            availableRooms.Add(roomCollider);
+        }
+
+        if (availableRooms.Count == 0)
+        {
+            Debug.Log($"{name} no other rooms available, staying");
+            timeInCurrentRoom = 0f;
+            targetTimeInRoom = Random.Range(minTimeInRoom, maxTimeInRoom);
+            WanderInCurrentRoom();
+            return;
+        }
+
+        BoxCollider newRoom = availableRooms[Random.Range(0, availableRooms.Count)];
+        
+        Vector3? corridorPoint = FindCorridorBetweenRooms(currentRoom, newRoom);
+        
+        if (corridorPoint.HasValue)
+        {
+            navAgent.SetDestination(corridorPoint.Value);
+            Debug.Log($"{name} moving to corridor towards new room");
+        }
+        else
+        {
+            navAgent.SetDestination(GetRandomPointInRoom(newRoom));
+        }
+
+        currentRoom = newRoom;
+        timeInCurrentRoom = 0f;
+        targetTimeInRoom = Random.Range(minTimeInRoom, maxTimeInRoom);
+    }
+
+    private Vector3? FindCorridorBetweenRooms(BoxCollider roomA, BoxCollider roomB)
+    {
+        GameObject[] corridors = GameObject.FindGameObjectsWithTag("Corridor");
+        
+        if (corridors.Length == 0) return null;
+
+        Vector3 midPoint = (roomA.bounds.center + roomB.bounds.center) / 2f;
+
+        Vector3? bestPoint = null;
+        float minDist = Mathf.Infinity;
+
+        foreach (var corridor in corridors)
+        {
+            Collider corridorCollider = corridor.GetComponent<Collider>();
+            if (corridorCollider == null) continue;
+
+            float heightDiff = Mathf.Abs(corridorCollider.bounds.center.y - transform.position.y);
+            if (heightDiff > 2f) continue;
+
+            Vector3 closestPoint = corridorCollider.ClosestPoint(midPoint);
+            float dist = Vector3.Distance(midPoint, closestPoint);
+
+            if (dist < minDist)
+            {
+                minDist = dist;
+                bestPoint = closestPoint;
+            }
+        }
+
+        return bestPoint;
+    }
+
+    private Vector3 GetRandomPointInRoom(BoxCollider room)
+    {
+        Vector3 min = room.bounds.min;
+        Vector3 max = room.bounds.max;
+
+        return new Vector3(
+            Random.Range(min.x, max.x),
+            transform.position.y,
+            Random.Range(min.z, max.z)
+        );
+    }
+
+    public bool HasNearbyAgents(float radius)
+    {
+        AgentController[] agents = FindObjectsByType<AgentController>(FindObjectsSortMode.None);
+        
+        foreach (var other in agents)
+        {
+            if (other == this) continue;
+            if (Vector3.Distance(transform.position, other.transform.position) < radius)
+            {
+                return true;
             }
         }
         
-        // Losowa szansa na "kaszel" - krótkie zatrzymanie
-        if (Random.value < 0.05f * Time.deltaTime)
-        {
-            StartCoroutine(CoughInSmoke());
-        }
-    }
-
-    private IEnumerator CoughInSmoke()
-    {
-        float originalSpeed = navAgent.speed;
-        navAgent.speed = 0f; // Zatrzymaj się
-        Debug.Log($"{name} coughing in smoke!");
-        
-        yield return new WaitForSeconds(Random.Range(0.5f, 1.5f));
-        
-        navAgent.speed = originalSpeed;
-    }
-
-    private void OnTriggerEnter(Collider other)
-    {
-        if (other.CompareTag("Smoke"))
-        {
-            isInSmoke = true;
-            Debug.Log($"{name} entered smoke area");
-        }
-    }
-
-    private void OnTriggerExit(Collider other)
-    {
-        if (other.CompareTag("Smoke"))
-        {
-            isInSmoke = false;
-            Debug.Log($"{name} left smoke area");
-        }
+        return false;
     }
 }

@@ -25,6 +25,10 @@ public class FloorManager : MonoBehaviour
     [SerializeField] private float agentTransparency = 0.3f;
     [SerializeField] private float floorHeight = 2.2f; // Wysokość jednego piętra
     
+    private float agentUpdateTimer = 0f;
+    private float agentUpdateInterval = 0.2f; // Odśwież widoczność agentów co 0.2 sekundy
+    private UnityEngine.AI.NavMeshAgent[] allAgents = new UnityEngine.AI.NavMeshAgent[0];
+    
     private void Start()
     {
         UpdateFloorVisibility();
@@ -61,6 +65,15 @@ public class FloorManager : MonoBehaviour
         {
             Debug.Log("Strzałka w dół");
             SetFloorView(Mathf.Max(currentFloorView - 1, 1));
+        }
+        
+        // Odśwież widoczność agentów
+        agentUpdateTimer += Time.deltaTime;
+        if (agentUpdateTimer >= agentUpdateInterval)
+        {
+            agentUpdateTimer = 0f;
+            allAgents = FindObjectsByType<UnityEngine.AI.NavMeshAgent>(FindObjectsSortMode.None);
+            UpdateAgentVisibility();
         }
     }
 
@@ -99,58 +112,43 @@ public class FloorManager : MonoBehaviour
         {
             tilemapRenderer.enabled = visible;
         }
-        if (hideAgentsOnHiddenFloors)
-        {
-            HideAgentsOnFloor(floor, visible);
-        }
-        else
-        {
-            MakeAgentsTransparent(floor, visible);
-        }
+        // Widoczność agentów jest obsługiwana przez UpdateAgentVisibility() w Update
     }
 
-    private void HideAgentsOnFloor(Floor floor, bool visible)
+    private bool IsAgentOnFloor(Vector3 position, Floor floor)
     {
-        // Znajdź wszystkich agentów na tym piętrze
-        UnityEngine.AI.NavMeshAgent[] allAgents = FindObjectsOfType<UnityEngine.AI.NavMeshAgent>();
+        float floorY = (floor.floorNumber - 1) * floorHeight;
         
+        return position.y >= floorY - 0.5f && position.y <= floorY + floorHeight + 0.5f;
+    }
+
+    private void UpdateAgentVisibility()
+    {
+        // Odśwież widoczność wszystkich agentów na podstawie obecnego widoku
         foreach (var agent in allAgents)
         {
-            if (IsAgentOnFloor(agent.transform.position, floor))
+            if (agent == null || !agent.isActiveAndEnabled) continue;
+            
+            // Oblicz na którym piętrze faktycznie jest agent
+            int agentFloor = Mathf.FloorToInt(agent.transform.position.y / floorHeight) + 1;
+            
+            // Agent jest widoczny jeśli jego piętro <= wyświetlane piętro
+            bool isOnVisibleFloor = agentFloor <= currentFloorView;
+            
+            // Zaktualizuj widoczność
+            Renderer[] agentRenderers = agent.GetComponentsInChildren<Renderer>();
+            foreach (Renderer renderer in agentRenderers)
             {
-                Renderer[] agentRenderers = agent.GetComponentsInChildren<Renderer>();
-                foreach (Renderer renderer in agentRenderers)
+                if (hideAgentsOnHiddenFloors)
                 {
-                    renderer.enabled = visible;
+                    renderer.enabled = isOnVisibleFloor;
                 }
-            }
-        }
-    }
-
-    private void MakeAgentsTransparent(Floor floor, bool visible)
-    {
-        UnityEngine.AI.NavMeshAgent[] allAgents = FindObjectsOfType<UnityEngine.AI.NavMeshAgent>();
-        
-        foreach (var agent in allAgents)
-        {
-            if (IsAgentOnFloor(agent.transform.position, floor))
-            {
-                Renderer[] agentRenderers = agent.GetComponentsInChildren<Renderer>();
-                foreach (Renderer renderer in agentRenderers)
+                else
                 {
                     Material[] materials = renderer.materials;
                     foreach (Material mat in materials)
                     {
-                        if (visible)
-                        {
-                            // Pełna widoczność
-                            SetMaterialTransparency(mat, 1f);
-                        }
-                        else
-                        {
-                            // Przezroczystość
-                            SetMaterialTransparency(mat, agentTransparency);
-                        }
+                        SetMaterialTransparency(mat, isOnVisibleFloor ? 1f : agentTransparency);
                     }
                 }
             }
@@ -175,13 +173,6 @@ public class FloorManager : MonoBehaviour
             mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
             mat.renderQueue = 3000;
         }
-    }
-
-    private bool IsAgentOnFloor(Vector3 position, Floor floor)
-    {
-        float floorY = (floor.floorNumber - 1) * floorHeight;
-        
-        return position.y >= floorY - 0.5f && position.y <= floorY + floorHeight + 0.5f;
     }
 
     private void UpdateUI()
