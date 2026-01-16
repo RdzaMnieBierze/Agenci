@@ -29,6 +29,7 @@ public class AgentController : MonoBehaviour, IAlarmObserver
     [SerializeField] private float minTimeInRoom = 5f;
     [SerializeField] private float maxTimeInRoom = 20f;
     [SerializeField] private float chanceToChangeRoom = 0.4f;
+
     
     private BoxCollider currentRoom = null;
     private float timeInCurrentRoom = 0f;
@@ -121,6 +122,7 @@ public class AgentController : MonoBehaviour, IAlarmObserver
 
     private void Update()
     {
+
         if (currentState == AgentState.Wandering)
         {
             UpdateWandering();
@@ -130,6 +132,8 @@ public class AgentController : MonoBehaviour, IAlarmObserver
             UpdateEvacuating();
         }
     }
+
+    
 
     private void UpdateWandering()
     {

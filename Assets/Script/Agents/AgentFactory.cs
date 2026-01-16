@@ -52,14 +52,14 @@ public class AgentFactory : MonoBehaviour, IAgentFactory
         switch (type)
         {
             case AgentType.Adult:
-                speed = Random.Range(3.5f, 5.0f);
+                speed = Random.Range(3f, 4f);
                 vision = Random.Range(12f, 18f);
                 hearing = Random.Range(8f, 12f);
                 reaction = Random.Range(0.5f, 1.0f);
                 break;
 
             case AgentType.Child:
-                speed = Random.Range(2.5f, 4.0f); // Slower but energetic
+                speed = Random.Range(2.5f, 3.5f); // Slower but energetic
                 vision = Random.Range(10f, 15f); // Lower vantage point?
                 hearing = Random.Range(10f, 14f); // Good hearing
                 reaction = Random.Range(0.8f, 1.5f); // Distracted?
